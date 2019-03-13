@@ -8,6 +8,11 @@ from __future__ import print_function
 
 import torch
 from torch.autograd import Variable
+
+# import sys
+# sys.path.insert(0, "/datasets/home/09/909/mrajoria/cmr/cmr/external/PerceptualSimilarity/")
+# from models import dist_model
+
 from ..external.PerceptualSimilarity.models import dist_model
 
 

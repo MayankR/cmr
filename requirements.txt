@@ -3,7 +3,7 @@ chainer==3.3.0
 cupy==2.3.0
 Cython==0.27.3
 h5py==2.7.1
-imageio==2.2.0
+#imageio==2.2.0
 ipdb==0.10.3
 matplotlib==2.1.2
 meshzoo==0.3.1

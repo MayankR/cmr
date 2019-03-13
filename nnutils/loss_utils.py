@@ -98,15 +98,19 @@ def camera_loss(cam_pred, cam_gt, margin):
     cam_* are B x 7, [sc, tx, ty, quat]
     Losses are in similar magnitude so one margin is ok.
     """
-    rot_pred = cam_pred[:, -4:]
-    rot_gt = cam_gt[:, -4:]
+    # CH: camera loss always 0
+    return 0
 
-    rot_loss = hinge_loss(quat_loss_geodesic(rot_pred, rot_gt), margin)
-    # Scale and trans.
-    st_loss = (cam_pred[:, :3] - cam_gt[:, :3])**2
-    st_loss = hinge_loss(st_loss.view(-1), margin)
+    # CH: comment out old loss code
+#     rot_pred = cam_pred[:, -4:]
+#     rot_gt = cam_gt[:, -4:]
 
-    return rot_loss.mean() + st_loss.mean()
+#     rot_loss = hinge_loss(quat_loss_geodesic(rot_pred, rot_gt), margin)
+#     # Scale and trans.
+#     st_loss = (cam_pred[:, :3] - cam_gt[:, :3])**2
+#     st_loss = hinge_loss(st_loss.view(-1), margin)
+
+#     return rot_loss.mean() + st_loss.mean()
 
 def hinge_loss(loss, margin):
     # Only penalize if loss > margin
@@ -204,12 +208,15 @@ def kp_l2_loss(kp_pred, kp_gt):
 
     \Sum_i [0.5 * vis[i] * (kp_gt[i] - kp_pred[i])^2] / (|vis|)
     """
-    criterion = torch.nn.MSELoss()
+    # CH: Do not consider keypoint loss
+    return 0
 
-    vis = (kp_gt[:, :, 2, None] > 0).float()
+#     criterion = torch.nn.MSELoss()
 
-    # This always has to be (output, target), not (target, output)
-    return criterion(vis * kp_pred, vis * kp_gt[:, :, :2])
+#     vis = (kp_gt[:, :, 2, None] > 0).float()
+
+#     # This always has to be (output, target), not (target, output)
+#     return criterion(vis * kp_pred, vis * kp_gt[:, :, :2])
 
 
 def lsgan_loss(score_real, score_fake):

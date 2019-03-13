@@ -160,7 +160,7 @@ class NeuralRenderer(torch.nn.Module):
         self.renderer.to_gpu()
 
         self.proj_fn = geom_utils.orthographic_proj_withz
-        self.offset_z = 5.
+        self.offset_z = 2.
 
     def ambient_light_only(self):
         # Make light only ambient.

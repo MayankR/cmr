@@ -25,7 +25,7 @@ flags.DEFINE_string('name', 'exp_name', 'Experiment Name')
 flags.DEFINE_integer('gpu_id', 0, 'Which gpu to use')
 flags.DEFINE_integer('num_epochs', 1000, 'Number of epochs to train')
 flags.DEFINE_integer('num_pretrain_epochs', 0, 'If >0, we will pretain from an existing saved model.')
-flags.DEFINE_float('learning_rate', 0.0001, 'learning rate')
+flags.DEFINE_float('learning_rate', 0.03, 'learning rate')
 flags.DEFINE_float('beta1', 0.9, 'Momentum term of adam')
 
 flags.DEFINE_bool('use_sgd', False, 'if true uses sgd instead of adam, beta1 is used as mmomentu')
@@ -37,8 +37,8 @@ flags.DEFINE_integer('num_iter', 0, 'Number of training iterations. 0 -> Use epo
 flags.DEFINE_string('checkpoint_dir', osp.join(cache_path, 'snapshots'),
                     'Root directory for output files')
 flags.DEFINE_integer('print_freq', 20, 'scalar logging frequency')
-flags.DEFINE_integer('save_latest_freq', 10000, 'save latest model every x iterations')
-flags.DEFINE_integer('save_epoch_freq', 50, 'save model every k epochs')
+flags.DEFINE_integer('save_latest_freq', 20, 'save latest model every x iterations')
+flags.DEFINE_integer('save_epoch_freq', 1, 'save model every k epochs')
 
 ## Flags for visualization
 flags.DEFINE_integer('display_freq', 100, 'visuals logging frequency')
@@ -83,7 +83,25 @@ class Trainer():
         if network_dir is None:
             network_dir = self.save_dir
         save_path = os.path.join(network_dir, save_filename)
+        print("loading network", save_path)
         network.load_state_dict(torch.load(save_path))
+        return
+    
+    
+    # helper loading function that can be used by subclasses
+    def load_encoder(self, network, save_path):
+        print("Loading encoder state from", save_path)
+        new_state = torch.load(save_path)
+        model_state = network.state_dict()
+    
+#         print(model_state['encoder.resnet_conv.resnet.layer2.0.bn1.weight'])
+#         print(new_state['encoder.resnet_conv.resnet.layer2.0.bn1.weight'])
+            
+        pretrained_state = { k:v for k,v in new_state.iteritems() if k in model_state }
+        model_state.update(pretrained_state)
+    
+#         print(model_state['encoder.resnet_conv.resnet.layer2.0.bn1.weight'])
+            
         return
 
     def define_model(self):
@@ -146,6 +164,7 @@ class Trainer():
         for epoch in range(opts.num_pretrain_epochs, opts.num_epochs):
             epoch_iter = 0
             for i, batch in enumerate(self.dataloader):
+#                 print("h")
                 iter_start_time = time.time()
                 self.set_input(batch)
                 if not self.invalid_batch:
@@ -153,7 +172,6 @@ class Trainer():
                     self.forward()
                     self.smoothed_total_loss = self.smoothed_total_loss*0.99 + 0.01*self.total_loss.data[0]
                     self.total_loss.backward()
-                    # pdb.set_trace()
                     self.optimizer.step()
 
                 total_steps += 1
@@ -174,11 +192,13 @@ class Trainer():
                 if total_steps % opts.save_latest_freq == 0:
                     print('saving the model at the end of epoch {:d}, iters {:d}'.format(epoch, total_steps))
                     self.save('latest')
+                    self.save(epoch+1)
 
                 if total_steps == opts.num_iter:
                     return
 
-            if (epoch+1) % opts.save_epoch_freq == 0:
+            print(epoch)
+            if (epoch+1) % 1 == 0: #opts.save_epoch_freq == 0:
                 print('saving the model at the end of epoch {:d}, iters {:d}'.format(epoch, total_steps))
                 self.save('latest')
                 self.save(epoch+1)

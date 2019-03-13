@@ -51,6 +51,7 @@ def orthographic_proj_withz(X, cam, offset_z=0.):
 
     scale = cam[:, 0].contiguous().view(-1, 1, 1)
     trans = cam[:, 1:3].contiguous().view(cam.size(0), 1, -1)
+#     print(trans)
 
     proj = scale * X_rot
 

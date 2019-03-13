@@ -62,6 +62,11 @@ class VisRenderer(object):
             # Here input it F x T x T x T x 3 (instead of F x T x T x 3)
             # So add batch dim.
             texture = torch.unsqueeze(texture, 0)
+            
+#         new_quat = transformations.quaternion_from_matrix(
+#             new_R, isprecise=True)
+        
+        
         if cams is None:
             cams = self.default_cam
         elif cams.dim() == 1:
@@ -120,6 +125,7 @@ class VisRenderer(object):
         quat = cam[-4:].view(1, 1, -1)
         R = transformations.quaternion_matrix(
             quat.squeeze().data.cpu().numpy())[:3, :3]
+        R = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]])
         rad_angle = np.deg2rad(angle)
         rotate_by = cv2.Rodrigues(rad_angle * np.array(axis))[0]
         # new_R = R.dot(rotate_by)

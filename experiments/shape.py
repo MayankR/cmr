@@ -23,7 +23,10 @@ import torch
 import torchvision
 from torch.autograd import Variable
 import scipy.io as sio
+import pickle
 from collections import OrderedDict
+import matplotlib
+matplotlib.use('Agg')
 
 from ..data import cub as cub_data
 from ..utils import visutil
@@ -37,15 +40,17 @@ from ..nnutils import geom_utils
 
 flags.DEFINE_string('dataset', 'cub', 'cub or pascal or p3d')
 # Weights:
-flags.DEFINE_float('kp_loss_wt', 30., 'keypoint loss weight')
+# flags.DEFINE_float('kp_loss_wt', 30., 'keypoint loss weight')
 flags.DEFINE_float('mask_loss_wt', 2., 'mask loss weight')
 flags.DEFINE_float('cam_loss_wt', 2., 'weights to camera loss')
 flags.DEFINE_float('deform_reg_wt', 10., 'reg to deformation')
-flags.DEFINE_float('triangle_reg_wt', 30., 'weights to triangle smoothness prior')
-flags.DEFINE_float('vert2kp_loss_wt', .16, 'reg to vertex assignment')
-flags.DEFINE_float('tex_loss_wt', .5, 'weights to tex loss')
-flags.DEFINE_float('tex_dt_loss_wt', .5, 'weights to tex dt loss')
+flags.DEFINE_float('triangle_reg_wt', 25., 'weights to triangle smoothness prior')
+# flags.DEFINE_float('vert2kp_loss_wt', .16, 'reg to vertex assignment')
+flags.DEFINE_float('tex_loss_wt', 1, 'weights to tex loss')
+flags.DEFINE_float('tex_dt_loss_wt', 1, 'weights to tex dt loss')
 flags.DEFINE_boolean('use_gtpose', True, 'if true uses gt pose for projection, but camera still gets trained.')
+
+flags.DEFINE_boolean('load_encoder_state', False, 'Load finetuned encoder')
 
 opts = flags.FLAGS
 
@@ -60,16 +65,29 @@ class ShapeTrainer(train_utils.Trainer):
         # Options
         # ----------
         self.symmetric = opts.symmetric
-        anno_sfm_path = osp.join(opts.cub_cache_dir, 'sfm', 'anno_train.mat')
-        anno_sfm = sio.loadmat(anno_sfm_path, struct_as_record=False, squeeze_me=True)
-        sfm_mean_shape = (np.transpose(anno_sfm['S']), anno_sfm['conv_tri']-1)
+        anno_sfm_path = osp.join(opts.cub_cache_dir, 'sfm', 'anno_train.pkl')
+#         anno_sfm = sio.loadmat(anno_sfm_path, struct_as_record=False, squeeze_me=True)
+        
+        f2 = open(anno_sfm_path, "rb")
+        anno_sfm = pickle.load(f2)
+        f2.close()
+        
+        sfm_mean_shape = (np.transpose(anno_sfm['S']), np.array(anno_sfm['conv_tri'])-1)
 
         img_size = (opts.img_size, opts.img_size)
         self.model = mesh_net.MeshNet(
-            img_size, opts, nz_feat=opts.nz_feat, num_kps=opts.num_kps, sfm_mean_shape=sfm_mean_shape)
+            img_size, opts, nz_feat=opts.nz_feat, num_kps=0, sfm_mean_shape=sfm_mean_shape)
 
+        if opts.load_encoder_state:
+            save_path = "/datasets/home/09/909/mrajoria/ResNet18-Autoencoder/saved_model/model_epoch_9_step_1850_Mar_10_23:10:40.t7"
+            self.load_encoder(self.model, save_path)
+            
+
+        # loading pretrained model
         if opts.num_pretrain_epochs > 0:
             self.load_network(self.model, 'pred', opts.num_pretrain_epochs)
+            
+        
 
         self.model = self.model.cuda(device=opts.gpu_id)
 
@@ -107,7 +125,7 @@ class ShapeTrainer(train_utils.Trainer):
             std=[0.229, 0.224, 0.225])
 
     def define_criterion(self):
-        self.projection_loss = loss_utils.kp_l2_loss
+#         self.projection_loss = loss_utils.kp_l2_loss
         self.mask_loss_fn = torch.nn.MSELoss()
         self.entropy_loss = loss_utils.entropy_loss
         self.deform_reg_fn = loss_utils.deform_l2reg
@@ -128,7 +146,7 @@ class ShapeTrainer(train_utils.Trainer):
             input_img_tensor[b] = self.resnet_transform(input_img_tensor[b])
         img_tensor = batch['img'].type(torch.FloatTensor)
         mask_tensor = batch['mask'].type(torch.FloatTensor)
-        kp_tensor = batch['kp'].type(torch.FloatTensor)
+#         kp_tensor = batch['kp'].type(torch.FloatTensor)
         cam_tensor = batch['sfm_pose'].type(torch.FloatTensor)
 
         self.input_imgs = Variable(
@@ -137,8 +155,8 @@ class ShapeTrainer(train_utils.Trainer):
             img_tensor.cuda(device=opts.gpu_id), requires_grad=False)
         self.masks = Variable(
             mask_tensor.cuda(device=opts.gpu_id), requires_grad=False)
-        self.kps = Variable(
-            kp_tensor.cuda(device=opts.gpu_id), requires_grad=False)
+#         self.kps = Variable(
+#             kp_tensor.cuda(device=opts.gpu_id), requires_grad=False)
         self.cams = Variable(
             cam_tensor.cuda(device=opts.gpu_id), requires_grad=False)
 
@@ -154,9 +172,12 @@ class ShapeTrainer(train_utils.Trainer):
             pred_codes, self.textures = self.model.forward(self.input_imgs)
         else:
             pred_codes = self.model.forward(self.input_imgs)
-        self.delta_v, scale, trans, quat = pred_codes
+#         self.delta_v, scale, trans, quat = pred_codes
+        self.delta_v, _, _, _ = pred_codes
 
-        self.cam_pred = torch.cat([scale, trans, quat], 1)
+        # CH: dont use predicted cam params
+#         self.cam_pred = torch.cat([scale, trans, quat], 1)
+        self.cam_pred = self.cams
 
         if opts.only_mean_sym:
             del_v = self.delta_v
@@ -168,21 +189,35 @@ class ShapeTrainer(train_utils.Trainer):
         self.pred_v = self.mean_shape + del_v
 
         # Compute keypoints.
-        self.vert2kp = torch.nn.functional.softmax(self.model.vert2kp, dim=1)
-        self.kp_verts = torch.matmul(self.vert2kp, self.pred_v)
+#         self.vert2kp = torch.nn.functional.softmax(self.model.vert2kp, dim=1)
+#         self.kp_verts = torch.matmul(self.vert2kp, self.pred_v)
 
+        # CH: Always use gt cam params
         # Decide which camera to use for projection.
-        if opts.use_gtpose:
-            proj_cam = self.cams
-        else:
-            proj_cam = self.cam_pred
+#         if opts.use_gtpose:
+        proj_cam = self.cams
+#         else:
+#             proj_cam = self.cam_pred
 
         # Project keypoints
-        self.kp_pred = self.renderer.project_points(self.kp_verts, proj_cam)
+#         self.kp_pred = self.renderer.project_points(self.kp_verts, proj_cam)
 
         # Render mask.
+#         print(proj_cam)
+#         proj_cam = np.array([np.array([81.96]), np.array([234.26, 151.87]), np.array([[-0.3036,-0.8069,0.5067],[-0.9099,0.0878,-0.4054],[0.2826,-0.5842, -0.7608]])])
+        
+#         from ..utils import transformations
+#         sfm_rot = np.pad(proj_cam[2], (0,1), 'constant')
+#         sfm_rot[3, 3] = 1
+#         proj_cam[2] = transformations.quaternion_from_matrix(sfm_rot, isprecise=True)
+#         proj_cam = [81.96, 234.26, 151.87, proj_cam[2][0], proj_cam[2][1], proj_cam[2][2], proj_cam[2][3]]*16
+#         proj_cam = np.array(proj_cam)
+#         proj_cam = torch.from_numpy(proj_cam).float().cuda(opts.gpu_id)
+#         proj_cam =torch.tensor(proj_cam, device=opts.gpu_id)
+        
         self.mask_pred = self.renderer.forward(self.pred_v, self.faces, proj_cam)
 
+        
         if opts.texture:
             self.texture_flow = self.textures
             self.textures = geom_utils.sample_textures(self.texture_flow, self.imgs)
@@ -194,30 +229,51 @@ class ShapeTrainer(train_utils.Trainer):
             self.textures = None
 
         # Compute losses for this instance.
-        self.kp_loss = self.projection_loss(self.kp_pred, self.kps)
+#         self.kp_loss = self.projection_loss(self.kp_pred, self.kps)
         self.mask_loss = self.mask_loss_fn(self.mask_pred, self.masks)
         self.cam_loss = self.camera_loss(self.cam_pred, self.cams, 0)
 
         if opts.texture:
+            print(self.mask_pred.shape)
+            img = self.texture_pred.data.cpu().numpy()[0]
+            img = np.transpose(img, (1, 2, 0))
+            
+            import matplotlib.pyplot as plt
+            plt.ion()
+            plt.figure(1)
+            plt.clf()
+            plt.subplot(221)
+            plt.imshow(img)
+            plt.subplot(222)
+            plt.imshow(np.transpose(self.imgs.data.cpu().numpy()[0], (1, 2, 0)))
+            plt.subplot(223)
+            plt.imshow(self.mask_pred.data.cpu().numpy()[0])
+            plt.subplot(224)
+            plt.imshow(self.masks.data.cpu().numpy()[0])
+            plt.draw()
+            plt.savefig("figure_pred_texture.png")
+            
             self.tex_loss = self.texture_loss(self.texture_pred, self.imgs, self.mask_pred, self.masks)
             self.tex_dt_loss = self.texture_dt_loss_fn(self.texture_flow, self.dts_barrier)
 
         # Priors:
-        self.vert2kp_loss = self.entropy_loss(self.vert2kp)
-        self.deform_reg = self.deform_reg_fn(self.delta_v)
+        # CH: no entropy loss for keypoints
+        self.vert2kp_loss = 0 #self.entropy_loss(self.vert2kp)
+        self.deform_reg = 0 #self.deform_reg_fn(self.delta_v)
         self.triangle_loss = self.triangle_loss_fn(self.pred_v)
 
         # Finally sum up the loss.
         # Instance loss:
-        self.total_loss = opts.kp_loss_wt * self.kp_loss
-        self.total_loss += opts.mask_loss_wt * self.mask_loss
+#         self.total_loss = opts.kp_loss_wt * self.kp_loss
+#         self.total_loss += opts.mask_loss_wt * self.mask_loss
+        self.total_loss = opts.mask_loss_wt * self.mask_loss
         self.total_loss += opts.cam_loss_wt * self.cam_loss
         if opts.texture:
             self.total_loss += opts.tex_loss_wt * self.tex_loss
 
         # Priors:
-        self.total_loss += opts.vert2kp_loss_wt * self.vert2kp_loss
-        self.total_loss += opts.deform_reg_wt * self.deform_reg
+#         self.total_loss += opts.vert2kp_loss_wt * self.vert2kp_loss
+#         self.total_loss += opts.deform_reg_wt * self.deform_reg
         self.total_loss += opts.triangle_reg_wt * self.triangle_loss
 
         self.total_loss += opts.tex_dt_loss_wt * self.tex_dt_loss
@@ -287,12 +343,12 @@ class ShapeTrainer(train_utils.Trainer):
         sc_dict = OrderedDict([
             ('smoothed_total_loss', self.smoothed_total_loss),
             ('total_loss', self.total_loss.data[0]),
-            ('kp_loss', self.kp_loss.data[0]),
+            ('kp_loss', 0),#self.kp_loss.data[0]),
             ('mask_loss', self.mask_loss.data[0]),
-            ('vert2kp_loss', self.vert2kp_loss.data[0]),
-            ('deform_reg', self.deform_reg.data[0]),
+            ('vert2kp_loss', 0), #self.vert2kp_loss.data[0]),
+            ('deform_reg', 0), #self.deform_reg.data[0]),
             ('tri_loss', self.triangle_loss.data[0]),
-            ('cam_loss', self.cam_loss.data[0]),
+            ('cam_loss', 0)#self.cam_loss.data[0]),
         ])
         if self.opts.texture:
             sc_dict['tex_loss'] = self.tex_loss.data[0]

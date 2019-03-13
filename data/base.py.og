@@ -30,7 +30,7 @@ from ..utils import image as image_utils
 from ..utils import transformations
 
 
-flags.DEFINE_integer('img_size', 224, 'image size')
+flags.DEFINE_integer('img_size', 256, 'image size')
 
 flags.DEFINE_float('padding_frac', 0.05,
                    'bbox is increased by this fraction of max_dim')
@@ -67,28 +67,22 @@ class BaseDataset(Dataset):
         data_sfm = self.anno_sfm[index]
 
         # sfm_pose = (sfm_c, sfm_t, sfm_r)
-        rot_xy = np.array([[0,-1,0],[1,0,0],[0,0,1]])
-        rot_mat = np.copy(data_sfm['rot']).dot(rot_xy)
-        sfm_pose = [np.copy(data_sfm['scale']/8).astype(float), np.copy(data_sfm['trans'])[:2], rot_mat]
-#         sfm_pose = [np.copy(data_sfm['scale']/10).astype(float), np.copy(data_sfm['trans'])[:2], np.copy(data_sfm['rot']).T * np.array([[1, 1, 1], [-1, -1, -1], [-1, -1, -1]])]
-#         sfm_pose = [np.array([81.96]).astype(float), np.array([234.26, 151.87]), np.array([[-0.3036,-0.8069,0.5067],[-0.9099,0.0878,-0.4054],[0.2826,-0.5842, -0.7608]])]
+        sfm_pose = [np.copy(data_sfm.scale), np.copy(data_sfm.trans), np.copy(data_sfm.rot)]
 
-        # Rot matrix to quaternion
         sfm_rot = np.pad(sfm_pose[2], (0,1), 'constant')
         sfm_rot[3, 3] = 1
         sfm_pose[2] = transformations.quaternion_from_matrix(sfm_rot, isprecise=True)
 
-        
-        img_path = osp.join(self.img_dir, str(data['rel_path']))
-        img = scipy.misc.imread(img_path)[:,:,:-1] / 255.0
+        img_path = osp.join(self.img_dir, str(data.rel_path))
+        img = scipy.misc.imread(img_path) / 255.0
         # Some are grayscale:
         if len(img.shape) == 2:
             img = np.repeat(np.expand_dims(img, 2), 3, axis=2)
-        mask = np.expand_dims(data['mask'], 2)
+        mask = np.expand_dims(data.mask, 2)
 
         # Adjust to 0 indexing
         bbox = np.array(
-            [data['bbox']['x1'], data['bbox']['y1'], data['bbox']['x2'], data['bbox']['y2']],
+            [data.bbox.x1, data.bbox.y1, data.bbox.x2, data.bbox.y2],
             float) - 1
 
         # CH: removing KP
@@ -124,11 +118,12 @@ class BaseDataset(Dataset):
 
         # Finally transpose the image to 3xHxW
         img = np.transpose(img, (2, 0, 1))
-
-#         print("S", sfm_pose)
-        sfm_pose[1] = np.array([0, 0])
-#         print("S2", sfm_pose)
         
+        
+        print("S", sfm_pose)
+        sfm_pose[1] = sfm_pose[1]
+        print("S2", sfm_pose)
+
         return img, mask, sfm_pose
 
     # CH: remove kp stuff
@@ -146,7 +141,7 @@ class BaseDataset(Dataset):
 
     def crop_image(self, img, mask, bbox, kp, vis, sfm_pose):
         # crop image and mask and translate kps
-        img = image_utils.crop(img, bbox, bgval=0)
+        img = image_utils.crop(img, bbox, bgval=1)
         mask = image_utils.crop(mask, bbox, bgval=0)
 #         kp[vis, 0] -= bbox[0]
 #         kp[vis, 1] -= bbox[1]

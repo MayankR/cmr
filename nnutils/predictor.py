@@ -25,7 +25,8 @@ from ..utils import bird_vis
 # These options are off by default, but used for some ablations reported.
 flags.DEFINE_boolean('ignore_pred_delta_v', False, 'Use only mean shape for prediction')
 flags.DEFINE_boolean('use_sfm_ms', False, 'Uses sfm mean shape for prediction')
-flags.DEFINE_boolean('use_sfm_camera', False, 'Uses sfm mean camera')
+# CH: setting to true to use GT pose
+flags.DEFINE_boolean('use_sfm_camera', True, 'Uses sfm mean camera')
 
 
 class MeshPredictor(object):
@@ -118,14 +119,16 @@ class MeshPredictor(object):
 
         self.delta_v, scale, trans, quat = pred_codes
 
-        if self.opts.use_sfm_camera:
-            self.cam_pred = self.sfm_cams
-        else:
-            self.cam_pred = torch.cat([scale, trans, quat], 1)
+        # CH: commented below code so that its not run at all
+#         if self.opts.use_sfm_camera:
+        self.cam_pred = self.sfm_cams
+#         else:
+#             self.cam_pred = torch.cat([scale, trans, quat], 1)
 
         del_v = self.model.symmetrize(self.delta_v)
         # Deform mean shape:
         self.mean_shape = self.model.get_mean_shape()
+        print("model mean shape shape: ", self.mean_shape.shape)
 
         if self.opts.use_sfm_ms:
             self.pred_v = self.sfm_mean_shape
@@ -135,16 +138,16 @@ class MeshPredictor(object):
             self.pred_v = self.mean_shape + del_v
 
         # Compute keypoints.
-        if self.opts.use_sfm_ms:
-            self.kp_verts = self.pred_v
-        else:
-            self.vert2kp = torch.nn.functional.softmax(
-                self.model.vert2kp, dim=1)
-            self.kp_verts = torch.matmul(self.vert2kp, self.pred_v)
+#         if self.opts.use_sfm_ms:
+#             self.kp_verts = self.pred_v
+#         else:
+#             self.vert2kp = torch.nn.functional.softmax(
+#                 self.model.vert2kp, dim=1)
+#             self.kp_verts = torch.matmul(self.vert2kp, self.pred_v)
 
         # Project keypoints
-        self.kp_pred = self.renderer.project_points(self.kp_verts,
-                                                    self.cam_pred)
+#         self.kp_pred = self.renderer.project_points(self.kp_verts,
+#                                                     self.cam_pred)
         self.mask_pred = self.renderer.forward(self.pred_v, self.faces,
                                                self.cam_pred)
 
@@ -175,9 +178,10 @@ class MeshPredictor(object):
 
     def collect_outputs(self):
         outputs = {
-            'kp_pred': self.kp_pred.data,
+#             'kp_pred': self.kp_pred.data,
             'verts': self.pred_v.data,
-            'kp_verts': self.kp_verts.data,
+            'faces': self.model.og_faces,
+#             'kp_verts': self.kp_verts.data,
             'cam_pred': self.cam_pred.data,
             'mask_pred': self.mask_pred.data,
         }

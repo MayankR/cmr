@@ -34,6 +34,7 @@ flags.DEFINE_boolean('use_deconv', False, 'If true uses Deconv')
 flags.DEFINE_string('upconv_mode', 'bilinear', 'upsample mode')
 
 flags.DEFINE_boolean('only_mean_sym', False, 'If true, only the meanshape is symmetric')
+flags.DEFINE_boolean('deeper_shape_predictor', False, 'Use 2 layer shape deformation predictor')
 
 
 #------------- Modules ------------#
@@ -156,6 +157,30 @@ class ShapePredictor(nn.Module):
         # print('shape: ( Mean = {}, Var = {} )'.format(delta_v.mean().data[0], delta_v.var().data[0]))
         return delta_v
 
+class DeeperShapePredictor(nn.Module):
+    """
+    Outputs mesh deformations
+    """
+
+    def __init__(self, nz_feat, num_verts):
+        super(DeeperShapePredictor, self).__init__()
+        # self.pred_layer = nb.fc(True, nz_feat, num_verts)
+        self.hidden_layer = nn.Linear(nz_feat, num_verts)
+        self.relu_act = nn.LeakyReLU(0.2,inplace=True)
+        self.pred_layer = nn.Linear(num_verts, num_verts * 3)
+
+        # Initialize pred_layer weights to be small so initial def aren't so big
+        self.pred_layer.weight.data.normal_(0, 0.0001)
+
+    def forward(self, feat):
+        # pdb.set_trace()
+        feat = self.hidden_layer.forward(feat)
+        feat = self.relu_act(feat)
+        delta_v = self.pred_layer.forward(feat)
+        # Make it B x num_verts x 3
+        delta_v = delta_v.view(delta_v.size(0), -1, 3)
+        # print('shape: ( Mean = {}, Var = {} )'.format(delta_v.mean().data[0], delta_v.var().data[0]))
+        return delta_v
 
 class QuatPredictor(nn.Module):
     def __init__(self, nz_feat, nz_rot=4, classify_rot=False):
@@ -203,24 +228,29 @@ class TransPredictor(nn.Module):
 
 
 class CodePredictor(nn.Module):
-    def __init__(self, nz_feat=100, num_verts=1000):
+    def __init__(self, nz_feat=100, num_verts=1000, deeper_shape_predictor=False):
         super(CodePredictor, self).__init__()
-        self.quat_predictor = QuatPredictor(nz_feat)
-        self.shape_predictor = ShapePredictor(nz_feat, num_verts=num_verts)
-        self.scale_predictor = ScalePredictor(nz_feat)
-        self.trans_predictor = TransPredictor(nz_feat)
+#         self.quat_predictor = QuatPredictor(nz_feat)
+        if deeper_shape_predictor:
+            print("Using deeper shape predictor")
+            self.shape_predictor = DeeperShapePredictor(nz_feat, num_verts=num_verts)
+        else:
+            print("Using shallow shape predictor")
+            self.shape_predictor = ShapePredictor(nz_feat, num_verts=num_verts)
+#         self.scale_predictor = ScalePredictor(nz_feat)
+#         self.trans_predictor = TransPredictor(nz_feat)
 
     def forward(self, feat):
         shape_pred = self.shape_predictor.forward(feat)
-        scale_pred = self.scale_predictor.forward(feat)
-        quat_pred = self.quat_predictor.forward(feat)
-        trans_pred = self.trans_predictor.forward(feat)
+        scale_pred = 0 #self.scale_predictor.forward(feat)
+        quat_pred = 0 #self.quat_predictor.forward(feat)
+        trans_pred = 0 #self.trans_predictor.forward(feat)
         return shape_pred, scale_pred, trans_pred, quat_pred
 
 #------------ Mesh Net ------------#
 #----------------------------------#
 class MeshNet(nn.Module):
-    def __init__(self, input_shape, opts, nz_feat=100, num_kps=15, sfm_mean_shape=None):
+    def __init__(self, input_shape, opts, nz_feat=100, num_kps=0, sfm_mean_shape=None):
         # Input shape is H x W of the image.
         super(MeshNet, self).__init__()
         self.opts = opts
@@ -261,17 +291,18 @@ class MeshNet(nn.Module):
 
         verts_np = verts
         faces_np = faces
+        self.og_faces = faces
         self.faces = Variable(torch.LongTensor(faces).cuda(), requires_grad=False)
         self.edges2verts = mesh.compute_edges2verts(verts, faces)
 
-        vert2kp_init = torch.Tensor(np.ones((num_kps, num_verts)) / float(num_verts))
+#         vert2kp_init = torch.Tensor(np.ones((num_kps, num_verts)) / float(num_verts))
         # Remember initial vert2kp (after softmax)
-        self.vert2kp_init = torch.nn.functional.softmax(Variable(vert2kp_init.cuda(), requires_grad=False), dim=1)
-        self.vert2kp = nn.Parameter(vert2kp_init)
+#         self.vert2kp_init = torch.nn.functional.softmax(Variable(vert2kp_init.cuda(), requires_grad=False), dim=1)
+#         self.vert2kp = nn.Parameter(vert2kp_init)
 
 
         self.encoder = Encoder(input_shape, n_blocks=4, nz_feat=nz_feat)
-        self.code_predictor = CodePredictor(nz_feat=nz_feat, num_verts=self.num_output)
+        self.code_predictor = CodePredictor(nz_feat=nz_feat, num_verts=self.num_output, deeper_shape_predictor=opts.deeper_shape_predictor)
 
         if self.pred_texture:
             if self.symmetric_texture:
